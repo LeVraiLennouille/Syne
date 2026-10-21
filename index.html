@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f4f1ea">
+  <meta name="color-scheme" content="light dark">
   <meta name="description" content="Jeu coopératif à deux joueurs inspiré de Codenames Duet.">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -36,10 +37,6 @@
     </main>
 
     <footer class="controls">
-      <label class="theme-row">
-        <span>Thème</span>
-        <select id="theme" aria-label="Thème des mots"></select>
-      </label>
       <div class="row">
         <button id="btn-p1" class="btn secret p1" type="button">Vue Joueur 1</button>
         <button id="btn-p2" class="btn secret p2" type="button">Vue Joueur 2</button>
@@ -47,6 +44,11 @@
       <div class="row">
         <button id="btn-end-turn" class="btn ghost" type="button">Fin du tour</button>
         <button id="btn-new" class="btn ghost" type="button">Nouvelle partie</button>
+      </div>
+      <div class="row small">
+        <button id="btn-settings" class="btn ghost" type="button">Réglages</button>
+        <button id="btn-stats" class="btn ghost" type="button">Statistiques</button>
+        <button id="btn-flip" class="btn ghost" type="button" title="Retourner l'écran à 180° (tablette posée entre les joueurs)">Retourner</button>
       </div>
     </footer>
   </div>
@@ -64,7 +66,7 @@
       <div id="secret-content" hidden>
         <div class="legend">
           <span><i class="dot g"></i>9 à trouver</span>
-          <span><i class="dot b"></i>3 mortelles</span>
+          <span><i class="dot b"></i><span id="legend-b">3 mortelles</span></span>
         </div>
         <div id="secret-board" class="board secret-board"></div>
       </div>
@@ -80,7 +82,101 @@
       <h2 id="result-title"></h2>
       <p id="result-text"></p>
       <button id="btn-replay" class="btn primary" type="button">Nouvelle partie</button>
+      <div class="row">
+        <button id="btn-share-text" class="btn ghost" type="button">Partager le texte</button>
+        <button id="btn-share-image" class="btn ghost" type="button">Partager l'image</button>
+      </div>
       <button id="btn-view-board" class="btn ghost" type="button">Voir le plateau</button>
+    </div>
+  </section>
+
+  <!-- Réglages -->
+  <section id="settings" class="overlay panel-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="panel">
+      <div class="panel-head">
+        <h2 id="settings-title">Réglages</h2>
+        <button id="btn-settings-close" class="icon-btn" type="button" aria-label="Fermer">✕</button>
+      </div>
+      <div class="panel-body">
+        <h3>Prochaine partie</h3>
+        <div class="field">
+          <span class="field-label">Thèmes <em id="themes-count"></em></span>
+          <div id="theme-chips" class="chips" role="group" aria-label="Thèmes"></div>
+          <button id="btn-themes-all" class="link" type="button">Tout sélectionner</button>
+        </div>
+        <label class="field">
+          <span class="field-label">Assassins par joueur</span>
+          <select id="set-assassins">
+            <option value="1">1 · très facile</option>
+            <option value="2">2 · facile</option>
+            <option value="3">3 · normal (règle officielle)</option>
+            <option value="4">4 · difficile</option>
+            <option value="5">5 · expert</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Proximité des mots</span>
+          <select id="set-proximity">
+            <option value="far">Éloignés · équilibré entre les thèmes</option>
+            <option value="random">Aléatoire</option>
+            <option value="close">Proches · un seul thème par partie</option>
+          </select>
+          <span class="hint" id="proximity-hint"></span>
+        </label>
+        <button id="btn-apply-new" class="btn primary" type="button">Lancer une nouvelle partie</button>
+
+        <h3>Affichage</h3>
+        <div class="field">
+          <span class="field-label">Mode</span>
+          <div id="set-mode" class="seg" role="radiogroup" aria-label="Mode d'affichage">
+            <button type="button" role="radio" data-mode="auto">Auto</button>
+            <button type="button" role="radio" data-mode="light">Clair</button>
+            <button type="button" role="radio" data-mode="dark">Sombre</button>
+          </div>
+        </div>
+        <label class="switch-row">
+          <span>Mode daltonien<small>Ajoute des symboles et des motifs aux couleurs</small></span>
+          <input type="checkbox" class="switch" id="set-cb">
+        </label>
+        <label class="switch-row">
+          <span>Animations<small>Retournement des cartes</small></span>
+          <input type="checkbox" class="switch" id="set-anim">
+        </label>
+
+        <h3>Sons et vibrations</h3>
+        <label class="switch-row">
+          <span>Sons</span>
+          <input type="checkbox" class="switch" id="set-sound">
+        </label>
+        <label class="switch-row">
+          <span>Vibrations<small>Non disponibles sur iPhone et iPad</small></span>
+          <input type="checkbox" class="switch" id="set-vibrate">
+        </label>
+      </div>
+    </div>
+  </section>
+
+  <!-- Statistiques -->
+  <section id="stats" class="overlay panel-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="stats-title">
+    <div class="panel">
+      <div class="panel-head">
+        <h2 id="stats-title">Statistiques</h2>
+        <button id="btn-stats-close" class="icon-btn" type="button" aria-label="Fermer">✕</button>
+      </div>
+      <div class="panel-body">
+        <div id="stats-summary" class="stat-grid"></div>
+        <h3>Par thème</h3>
+        <div class="table-wrap">
+          <table id="stats-table">
+            <thead>
+              <tr><th>Thème</th><th>Parties</th><th>V</th><th>D</th><th>Tours moy.</th></tr>
+            </thead>
+            <tbody id="stats-body"></tbody>
+          </table>
+        </div>
+        <p class="hint" id="stats-hint">Les tours moyens ne comptent que les victoires (une victoire en mort subite compte 9 tours). Une partie multi-thèmes compte pour chaque thème utilisé.</p>
+        <button id="btn-stats-reset" class="btn ghost danger" type="button">Réinitialiser les statistiques</button>
+      </div>
     </div>
   </section>
 
