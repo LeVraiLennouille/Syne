@@ -1,4 +1,4 @@
-const CACHE = 'duo-code-v1.1';
+const CACHE = 'duo-code-v1.2';
 const ASSETS = [
   './',
   './index.html',

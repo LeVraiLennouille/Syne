@@ -4,6 +4,7 @@
   const STORAGE_KEY = 'duo-code-state-v1';
   const GRID_SIZE = 25;
   const TARGET = 15;
+  const TOKENS = 9; // jetons de tours (règle Duet)
 
   // Les thèmes sont chargés depuis words.json (voir loadThemes)
   let THEMES = {};
@@ -51,7 +52,10 @@
 
   const $ = (id) => document.getElementById(id);
   const els = {
+    app: $('app'),
     board: $('board'),
+    tokens: $('tokens'),
+    tokensLabel: $('tokens-label'),
     score: $('score'),
     bar: $('progress-bar'),
     turnCount: $('turn-count'),
@@ -106,6 +110,14 @@
   const other = (p) => (p === 1 ? 2 : 1);
   const foundCount = () => state.status.filter((s) => s === 'green').length;
 
+  // Agents de la clé k (ceux que le partenaire doit deviner) pas encore trouvés
+  const remaining = (k) => state.keys[k].filter((t, i) => t === 'g' && state.status[i] !== 'green').length;
+
+  // Une carte est « morte » si elle est trouvée, noire, ou passant innocent pour les deux clés
+  const isDead = (i) =>
+    state.status[i] === 'green' || state.status[i] === 'black' ||
+    (state.marks[1][i] && state.marks[2][i]);
+
   /* ---------- État ---------- */
 
   function newGame(theme) {
@@ -116,10 +128,15 @@
       theme,
       words: shuffle(wordsFor(theme)).slice(0, GRID_SIZE),
       keys: { 1: pairs.map((p) => p[0]), 2: pairs.map((p) => p[1]) },
-      status: Array(GRID_SIZE).fill('hidden'), // hidden | green | neutral | black
-      giver: 1,
+      status: Array(GRID_SIZE).fill('hidden'), // hidden | green | black
+      // marks[k][i] : la carte a été révélée comme passant innocent avec la clé du Joueur k
+      marks: { 1: Array(GRID_SIZE).fill(false), 2: Array(GRID_SIZE).fill(false) },
+      giver: 1, // joueur qui donne l'indice (= clé utilisée pour évaluer les cartes)
       turn: 1,
-      over: null // null | 'win' | 'lose'
+      tokens: TOKENS, // jetons de tours restants
+      suddenDeath: false,
+      over: null, // null | 'win' | 'lose'
+      reason: null // 'assassin' | 'suddenDeath'
     };
     save();
   }
@@ -134,7 +151,10 @@
       const ok = s && s.words && s.words.length === GRID_SIZE &&
         s.keys && s.keys[1] && s.keys[1].length === GRID_SIZE &&
         s.keys[2] && s.keys[2].length === GRID_SIZE &&
-        s.status && s.status.length === GRID_SIZE;
+        s.status && s.status.length === GRID_SIZE &&
+        typeof s.tokens === 'number' &&
+        s.marks && s.marks[1] && s.marks[1].length === GRID_SIZE &&
+        s.marks[2] && s.marks[2].length === GRID_SIZE;
       return ok ? s : null;
     } catch (e) {
       return null;
@@ -144,15 +164,35 @@
   /* ---------- Rendu ---------- */
 
   function render() {
-    // En-tête
-    els.turnCount.textContent = 'Tour ' + state.turn;
+    const sd = !!state.suddenDeath;
     const g = state.giver;
-    els.turnLabel.innerHTML =
-      '<span class="p' + g + '">Joueur ' + g + '</span> donne l\u2019indice · ' +
-      '<span class="p' + other(g) + '">Joueur ' + other(g) + '</span> devine';
+    els.app.classList.toggle('sudden', sd);
+
+    // En-tête
+    if (sd) {
+      els.turnCount.textContent = 'Mort subite';
+      els.turnLabel.innerHTML =
+        '<span class="p' + other(g) + '">Joueur ' + other(g) + '</span> devine · sans indice';
+    } else {
+      els.turnCount.textContent = 'Tour ' + state.turn + ' / ' + TOKENS;
+      els.turnLabel.innerHTML =
+        '<span class="p' + g + '">Joueur ' + g + '</span> donne l\u2019indice · ' +
+        '<span class="p' + other(g) + '">Joueur ' + other(g) + '</span> devine';
+    }
     const found = foundCount();
     els.score.textContent = found;
     els.bar.style.width = (found / TARGET) * 100 + '%';
+
+    // Jetons de tours
+    els.tokens.textContent = '';
+    for (let t = 0; t < TOKENS; t++) {
+      const d = document.createElement('i');
+      d.className = 'token' + (t < state.tokens ? '' : ' used');
+      els.tokens.appendChild(d);
+    }
+    els.tokensLabel.textContent = sd ? 'Plus de tours' : 'Tours restants';
+    els.tokens.setAttribute('aria-label',
+      sd ? 'Aucun tour restant, mort subite' : state.tokens + ' tour' + (state.tokens > 1 ? 's' : '') + ' restant' + (state.tokens > 1 ? 's' : ''));
 
     // Plateau
     els.board.textContent = '';
@@ -163,81 +203,132 @@
       if (word.length > 8) b.classList.add('long');
       if (word.length > 11) b.classList.add('xlong');
       const st = state.status[i];
-      if (st !== 'hidden') b.classList.add(st);
+      const m1 = state.marks[1][i];
+      const m2 = state.marks[2][i];
+      if (st === 'green' || st === 'black') {
+        b.classList.add(st);
+      } else if (m1 || m2) {
+        b.classList.add('neutral');
+        if (m1 && m2) b.classList.add('dead');
+      }
       b.textContent = word;
+      if (st === 'hidden') {
+        [1, 2].forEach((p) => {
+          if (state.marks[p][i]) {
+            const mk = document.createElement('i');
+            mk.className = 'mk p' + p;
+            b.appendChild(mk);
+          }
+        });
+      }
       b.dataset.index = i;
-      b.disabled = !!state.over || st === 'green' || st === 'black';
+      b.disabled = !!state.over || isDead(i);
       b.setAttribute('role', 'gridcell');
       els.board.appendChild(b);
     });
 
-    els.btnEnd.disabled = !!state.over;
-    els.btnEnd.style.opacity = state.over ? .4 : 1;
+    // Bouton d'action : fin du tour, ou changement de joueur en mort subite
+    if (sd) {
+      els.btnEnd.textContent = 'Changer de joueur';
+      els.btnEnd.disabled = !!state.over || remaining(other(g)) === 0;
+    } else {
+      els.btnEnd.textContent = 'Fin du tour';
+      els.btnEnd.disabled = !!state.over;
+    }
+    els.btnEnd.style.opacity = els.btnEnd.disabled ? .4 : 1;
   }
 
   function showResult() {
     if (!state.over) { els.result.hidden = true; return; }
     const win = state.over === 'win';
+    const n = foundCount();
+    const plural = n > 1 ? 's' : '';
     els.resultIcon.className = 'result-icon ' + (win ? 'win' : 'lose');
     els.resultTitle.textContent = win ? 'Victoire !' : 'Défaite';
-    els.resultText.textContent = win
-      ? 'Vous avez trouvé les ' + TARGET + ' agents en ' + state.turn + ' tour' + (state.turn > 1 ? 's' : '') + '.'
-      : 'Un assassin a été touché. Vous aviez trouvé ' + foundCount() + ' agent' + (foundCount() > 1 ? 's' : '') + ' sur ' + TARGET + '.';
+    if (win) {
+      els.resultText.textContent = state.suddenDeath
+        ? 'Les ' + TARGET + ' agents sont trouvés, en mort subite.'
+        : 'Les ' + TARGET + ' agents sont trouvés en ' + state.turn + ' tour' + (state.turn > 1 ? 's' : '') + '.';
+    } else if (state.reason === 'suddenDeath') {
+      els.resultText.textContent = 'Mort subite : un passant innocent a été touché. ' + n + ' agent' + plural + ' trouvé' + plural + ' sur ' + TARGET + '.';
+    } else {
+      els.resultText.textContent = 'Un assassin a été touché. ' + n + ' agent' + plural + ' trouvé' + plural + ' sur ' + TARGET + '.';
+    }
     els.result.hidden = false;
   }
 
   /* ---------- Jeu ---------- */
 
+  function finish(over, reason) {
+    state.over = over;
+    state.reason = reason || null;
+    save();
+    render();
+    showResult();
+  }
+
+  // Fin d'un tour : un jeton retourne dans la boîte. Plus de jeton = mort subite.
   function endTurn() {
-    state.giver = other(state.giver);
-    state.turn += 1;
+    state.tokens = Math.max(0, state.tokens - 1);
+    if (state.tokens === 0) {
+      state.suddenDeath = true;
+      toast('Plus de tours : mort subite !');
+      vibrate([40, 40, 40]);
+    } else {
+      state.turn += 1;
+    }
+    // Le joueur suivant donne l'indice (ou sert de clé), sauf s'il n'a plus d'agents à faire trouver
+    const next = other(state.giver);
+    if (remaining(next) > 0) state.giver = next;
     save();
     render();
   }
 
   function guess(i) {
-    if (state.over) return;
-    const status = state.status[i];
-    if (status === 'green' || status === 'black') return;
+    if (state.over || isDead(i)) return;
 
     // La carte est évaluée avec la clé du joueur qui a donné l'indice
-    const type = state.keys[state.giver][i];
+    const k = state.giver;
+    const type = state.keys[k][i];
 
+    // Assassin : défaite immédiate
     if (type === 'b') {
       state.status[i] = 'black';
-      state.over = 'lose';
       vibrate([80, 60, 200]);
-      save();
-      render();
-      showResult();
+      finish('lose', 'assassin');
       return;
     }
 
+    // Agent : on continue
     if (type === 'g') {
       state.status[i] = 'green';
       vibrate(30);
       if (foundCount() >= TARGET) {
-        state.over = 'win';
-        save();
-        render();
-        showResult();
+        finish('win');
         return;
       }
+      // En mort subite, si cette clé n'a plus d'agents, l'autre joueur prend le relais
+      if (state.suddenDeath && remaining(k) === 0) state.giver = other(k);
       save();
       render();
-      toast('Agent trouvé ! Vous pouvez continuer.');
+      toast(state.suddenDeath ? 'Agent trouvé ! Continuez.' : 'Agent trouvé ! Vous pouvez continuer.');
       return;
     }
 
-    // Passant innocent
-    if (status === 'neutral') {
+    // Passant innocent pour cette clé
+    if (state.marks[k][i] && !state.suddenDeath) {
       const btn = els.board.querySelector('[data-index="' + i + '"]');
-      if (btn) { btn.classList.add('shake'); }
-      toast('Déjà joué : passant innocent.');
+      if (btn) btn.classList.add('shake');
+      toast('Déjà joué avec cette clé.');
       return;
     }
-    state.status[i] = 'neutral';
+    state.marks[k][i] = true;
     vibrate(60);
+    if (state.suddenDeath) {
+      // Mort subite : la moindre erreur est fatale
+      finish('lose', 'suddenDeath');
+      return;
+    }
     toast('Passant innocent — fin du tour.');
     endTurn();
   }
@@ -294,7 +385,17 @@
   els.btnHide.addEventListener('click', hideSecret);
 
   els.btnEnd.addEventListener('click', () => {
-    if (!state.over) endTurn();
+    if (state.over) return;
+    if (state.suddenDeath) {
+      // Mort subite : on choisit quel joueur devine (l'autre sert de clé)
+      if (remaining(other(state.giver)) > 0) {
+        state.giver = other(state.giver);
+        save();
+        render();
+      }
+      return;
+    }
+    endTurn();
   });
 
   function restart() {
@@ -306,7 +407,7 @@
     render();
   }
 
-  const gameInProgress = () => !state.over && state.status.some((s) => s !== 'hidden');
+  const gameInProgress = () => !state.over && (state.tokens < TOKENS || state.status.some((s) => s !== 'hidden'));
 
   els.btnNew.addEventListener('click', () => {
     if (gameInProgress() && !window.confirm('Abandonner la partie en cours ?')) return;
