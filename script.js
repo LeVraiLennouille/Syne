@@ -5,29 +5,32 @@
   const GRID_SIZE = 25;
   const TARGET = 15;
 
-  const WORDS = [
-    'ABEILLE','AIGLE','AIGUILLE','ANCRE','ANGE','ARBRE','ARGENT','ARMURE','ASSIETTE','ATLAS',
-    'AVION','BALEINE','BALLON','BANQUE','BARRE','BATEAU','BEURRE','BIBLIOTHÈQUE','BOMBE','BOUCHE',
-    'BOUGIE','BOUTEILLE','BRANCHE','BRIQUE','BUREAU','CABANE','CADRE','CAFÉ','CAMP','CANAL',
-    'CANON','CARTE','CASQUE','CHAÎNE','CHAMPION','CHÂTEAU','CHAT','CHEF','CHEVAL','CIEL',
-    'CINÉMA','CIRQUE','CLEF','CLOCHE','COEUR','COFFRE','COLLIER','COURONNE','COUTEAU','CRAYON',
-    'CROIX','CUISINE','DÉ','DENT','DIAMANT','DRAGON','ÉCOLE','ÉCRAN','ÉLÉPHANT','ÉPÉE',
-    'ÉTOILE','FANTÔME','FÉE','FENÊTRE','FEUILLE','FILET','FLÈCHE','FLEUR','FORÊT','FOUR',
-    'FROMAGE','GANT','GÂTEAU','GLACE','GOMME','GRILLE','GUITARE','HÔPITAL','HÔTEL','HUILE',
-    'ÎLE','JARDIN','JOKER','JUPE','LAC','LAIT','LAMPE','LANGUE','LAPIN','LETTRE',
-    'LIMONADE','LION','LIVRE','LOUP','LUNE','LUNETTES','MAGICIEN','MAIN','MARCHÉ','MASQUE',
-    'MÉDECIN','MIEL','MINE','MIROIR','MOMIE','MONTAGNE','MONTRE','MOTEUR','MOUCHE','MUSÉE',
-    'NAGE','NEIGE','NOEUD','NUIT','OEIL','OEUF','OMBRE','ONDE','OPÉRA','ORAGE',
-    'ORGUE','OURS','PAIN','PALAIS','PANTALON','PAPIER','PARACHUTE','PARC','PASSE','PATTE',
-    'PEINTURE','PERLE','PHARE','PIANO','PIED','PIERRE','PILE','PINCE','PIRATE','PISCINE',
-    'PLAGE','PLANÈTE','PLOMB','PLUME','POISSON','POMME','PONT','PORTE','POSTE','POUDRE',
-    'PRISE','PRINCE','PUCE','PYRAMIDE','RADIO','RAISIN','RAT','REINE','RÈGLE','ROBE',
-    'ROBOT','ROCHE','ROI','ROSE','ROUE','SABLE','SAC','SAISON','SALLE','SATELLITE',
-    'SERPENT','SINGE','SOLEIL','SORCIÈRE','SOURIS','STADE','STATUE','TABLE','TAMBOUR','TÊTE',
-    'THÉÂTRE','TIGRE','TIMBRE','TOIT','TONNERRE','TORTUE','TOUR','TRAIN','TRÉSOR','TROMPETTE',
-    'VAGUE','VAISSEAU','VENT','VER','VERRE','VILLE','VIN','VIOLON','VOILE','VOLCAN',
-    'ZÈBRE','ZÉRO'
-  ];
+  // Les thèmes sont chargés depuis words.json (voir loadThemes)
+  let THEMES = {};
+
+  const MIX_ID = 'mix';
+  const THEME_KEY = 'duo-code-theme-v1';
+
+  const firstTheme = () => Object.keys(THEMES)[0];
+
+  async function loadThemes() {
+    const res = await fetch('words.json');
+    if (!res.ok) throw new Error('words.json : HTTP ' + res.status);
+    const data = await res.json();
+    const themes = {};
+    Object.entries(data.themes || {}).forEach(([id, t]) => {
+      // Normalisation : majuscules, espaces retirés, doublons supprimés
+      const words = [...new Set((t.words || []).map((w) => String(w).trim().toUpperCase()).filter(Boolean))];
+      if (words.length >= GRID_SIZE) themes[id] = { label: t.label || id, words };
+    });
+    if (!Object.keys(themes).length) throw new Error('words.json : aucun thème valide');
+    return themes;
+  }
+
+  function wordsFor(id) {
+    if (id === MIX_ID) return [...new Set(Object.values(THEMES).flatMap((t) => t.words))];
+    return (THEMES[id] || THEMES[firstTheme()]).words;
+  }
 
   // Clé Duet : paires [clé Joueur 1, clé Joueur 2]
   // g = agent à trouver (vert), n = passant innocent (neutre), b = assassin (noir)
@@ -70,7 +73,8 @@
     resultText: $('result-text'),
     btnReplay: $('btn-replay'),
     btnViewBoard: $('btn-view-board'),
-    toast: $('toast')
+    toast: $('toast'),
+    theme: $('theme')
   };
 
   let state = null;
@@ -104,10 +108,13 @@
 
   /* ---------- État ---------- */
 
-  function newGame() {
+  function newGame(theme) {
+    theme = theme === MIX_ID || THEMES[theme] ? theme : firstTheme();
+    try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* ignoré */ }
     const pairs = shuffle(LAYOUT);
     state = {
-      words: shuffle(WORDS).slice(0, GRID_SIZE),
+      theme,
+      words: shuffle(wordsFor(theme)).slice(0, GRID_SIZE),
       keys: { 1: pairs.map((p) => p[0]), 2: pairs.map((p) => p[1]) },
       status: Array(GRID_SIZE).fill('hidden'), // hidden | green | neutral | black
       giver: 1,
@@ -154,6 +161,7 @@
       b.type = 'button';
       b.className = 'card';
       if (word.length > 8) b.classList.add('long');
+      if (word.length > 11) b.classList.add('xlong');
       const st = state.status[i];
       if (st !== 'hidden') b.classList.add(st);
       b.textContent = word;
@@ -254,6 +262,7 @@
       const c = document.createElement('div');
       c.className = 'cell';
       if (word.length > 8) c.classList.add('long');
+      if (word.length > 11) c.classList.add('xlong');
       if (key[i] === 'g') c.classList.add('g');
       if (key[i] === 'b') c.classList.add('b');
       if (state.status[i] === 'green') c.classList.add('done');
@@ -289,15 +298,26 @@
   });
 
   function restart() {
+    if (!firstTheme()) { toast('Liste de mots indisponible.'); return; }
     hideSecret();
-    newGame();
+    newGame(els.theme.value);
+    els.theme.value = state.theme;
     els.result.hidden = true;
     render();
   }
 
+  const gameInProgress = () => !state.over && state.status.some((s) => s !== 'hidden');
+
   els.btnNew.addEventListener('click', () => {
-    const inProgress = !state.over && state.status.some((s) => s !== 'hidden');
-    if (inProgress && !window.confirm('Abandonner la partie en cours ?')) return;
+    if (gameInProgress() && !window.confirm('Abandonner la partie en cours ?')) return;
+    restart();
+  });
+
+  els.theme.addEventListener('change', () => {
+    if (gameInProgress() && !window.confirm('Changer de thème lance une nouvelle partie. Continuer ?')) {
+      els.theme.value = state.theme;
+      return;
+    }
     restart();
   });
   els.btnReplay.addEventListener('click', restart);
@@ -310,10 +330,44 @@
 
   /* ---------- Démarrage ---------- */
 
-  state = load();
-  if (!state) newGame();
-  render();
-  showResult();
+  async function init() {
+    try {
+      THEMES = await loadThemes();
+    } catch (e) {
+      console.error(e);
+    }
+
+    const ids = Object.keys(THEMES);
+    ids.forEach((id) => {
+      const o = document.createElement('option');
+      o.value = id;
+      o.textContent = THEMES[id].label;
+      els.theme.appendChild(o);
+    });
+    if (ids.length > 1) {
+      const mixOpt = document.createElement('option');
+      mixOpt.value = MIX_ID;
+      mixOpt.textContent = 'Tous les thèmes (mélange)';
+      els.theme.appendChild(mixOpt);
+    }
+    els.theme.disabled = !ids.length;
+
+    state = load();
+    if (!state) {
+      if (!ids.length) {
+        els.turnLabel.textContent = 'Impossible de charger words.json';
+        return;
+      }
+      let saved = ids[0];
+      try { saved = localStorage.getItem(THEME_KEY) || ids[0]; } catch (e) { /* ignoré */ }
+      newGame(saved);
+    }
+    els.theme.value = state.theme || ids[0] || '';
+    render();
+    showResult();
+  }
+
+  init();
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
