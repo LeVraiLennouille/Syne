@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f4f1ea">
+  <meta name="theme-color" content="#f4f1ea" id="meta-theme">
   <meta name="color-scheme" content="light dark">
   <meta name="description" content="Jeu coopératif à deux joueurs inspiré de Codenames Duet.">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -13,11 +13,40 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <!-- Applique l'apparence avant le premier affichage (évite le flash clair/sombre) -->
+  <script>
+    (function () {
+      try {
+        var s = JSON.parse(localStorage.getItem('duo-code-settings-v1')) || {};
+        var a = s.appearance || 'auto';
+        var dark = a === 'dark' || (a === 'auto' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+        var r = document.documentElement;
+        r.dataset.theme = dark ? 'dark' : 'light';
+        r.dataset.cb = s.colorblind ? '1' : '0';
+        r.dataset.flip = s.flip ? '1' : '0';
+      } catch (e) { /* valeurs par défaut */ }
+    })();
+  </script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="app">
     <header class="top">
+      <div class="bar">
+        <span class="brand">Duo Code</span>
+        <div class="icons">
+          <button id="btn-flip" class="icon-btn" type="button" aria-label="Pivoter l'écran à 180°" title="Pivoter à 180°">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+          </button>
+          <button id="btn-stats" class="icon-btn" type="button" aria-label="Statistiques" title="Statistiques">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 20V11M12 20V4M19 20v-6"/></svg>
+          </button>
+          <button id="btn-settings" class="icon-btn" type="button" aria-label="Réglages" title="Réglages">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>
+          </button>
+        </div>
+      </div>
+
       <div class="status">
         <div class="turn">
           <span class="turn-count" id="turn-count">Tour 1</span>
@@ -33,10 +62,14 @@
     </header>
 
     <main>
-      <div id="board" class="board" role="grid" aria-label="Plateau de 25 mots"></div>
+      <div id="board" class="board" role="group" aria-label="Plateau de 25 mots"></div>
     </main>
 
     <footer class="controls">
+      <button id="btn-config" class="config-btn" type="button" aria-label="Ouvrir les réglages de la partie">
+        <span id="config-summary"></span>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
       <div class="row">
         <button id="btn-p1" class="btn secret p1" type="button">Vue Joueur 1</button>
         <button id="btn-p2" class="btn secret p2" type="button">Vue Joueur 2</button>
@@ -45,16 +78,11 @@
         <button id="btn-end-turn" class="btn ghost" type="button">Fin du tour</button>
         <button id="btn-new" class="btn ghost" type="button">Nouvelle partie</button>
       </div>
-      <div class="row small">
-        <button id="btn-settings" class="btn ghost" type="button">Réglages</button>
-        <button id="btn-stats" class="btn ghost" type="button">Statistiques</button>
-        <button id="btn-flip" class="btn ghost" type="button" title="Retourner l'écran à 180° (tablette posée entre les joueurs)">Retourner</button>
-      </div>
     </footer>
   </div>
 
   <!-- Vue secrète -->
-  <section id="secret" class="overlay secret-overlay" hidden aria-modal="true" role="dialog">
+  <section id="secret" class="overlay secret-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="secret-title">
     <div class="secret-inner">
       <h2 id="secret-title">Joueur 1</h2>
 
@@ -65,7 +93,7 @@
 
       <div id="secret-content" hidden>
         <div class="legend">
-          <span><i class="dot g"></i>9 à trouver</span>
+          <span><i class="dot g"></i><span id="legend-g">9 à trouver</span></span>
           <span><i class="dot b"></i><span id="legend-b">3 mortelles</span></span>
         </div>
         <div id="secret-board" class="board secret-board"></div>
@@ -76,107 +104,100 @@
   </section>
 
   <!-- Résultat -->
-  <section id="result" class="overlay result-overlay" hidden role="dialog" aria-modal="true">
+  <section id="result" class="overlay result-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="result-title">
     <div class="result-card">
       <div id="result-icon" class="result-icon" aria-hidden="true"></div>
       <h2 id="result-title"></h2>
       <p id="result-text"></p>
-      <button id="btn-replay" class="btn primary" type="button">Nouvelle partie</button>
-      <div class="row">
+      <p id="result-meta" class="result-meta"></p>
+      <div class="share-row">
         <button id="btn-share-text" class="btn ghost" type="button">Partager le texte</button>
         <button id="btn-share-image" class="btn ghost" type="button">Partager l'image</button>
       </div>
+      <button id="btn-replay" class="btn primary" type="button">Nouvelle partie</button>
       <button id="btn-view-board" class="btn ghost" type="button">Voir le plateau</button>
     </div>
   </section>
 
   <!-- Réglages -->
-  <section id="settings" class="overlay panel-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="settings-title">
-    <div class="panel">
-      <div class="panel-head">
+  <section id="settings" class="overlay sheet-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="sheet">
+      <div class="sheet-head">
         <h2 id="settings-title">Réglages</h2>
-        <button id="btn-settings-close" class="icon-btn" type="button" aria-label="Fermer">✕</button>
+        <button id="btn-settings-close" class="icon-btn" type="button" aria-label="Fermer">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
       </div>
-      <div class="panel-body">
-        <h3>Prochaine partie</h3>
-        <div class="field">
-          <span class="field-label">Thèmes <em id="themes-count"></em></span>
-          <div id="theme-chips" class="chips" role="group" aria-label="Thèmes"></div>
-          <button id="btn-themes-all" class="link" type="button">Tout sélectionner</button>
-        </div>
-        <label class="field">
-          <span class="field-label">Assassins par joueur</span>
-          <select id="set-assassins">
-            <option value="1">1 · très facile</option>
-            <option value="2">2 · facile</option>
-            <option value="3">3 · normal (règle officielle)</option>
-            <option value="4">4 · difficile</option>
-            <option value="5">5 · expert</option>
-          </select>
-        </label>
-        <label class="field">
-          <span class="field-label">Proximité des mots</span>
-          <select id="set-proximity">
-            <option value="far">Éloignés · équilibré entre les thèmes</option>
-            <option value="random">Aléatoire</option>
-            <option value="close">Proches · un seul thème par partie</option>
-          </select>
-          <span class="hint" id="proximity-hint"></span>
-        </label>
-        <button id="btn-apply-new" class="btn primary" type="button">Lancer une nouvelle partie</button>
 
+      <div class="group">
+        <h3>Prochaine partie</h3>
+
+        <div class="field">
+          <div class="field-head">
+            <span class="field-label" id="lbl-themes">Thèmes</span>
+            <span class="mini-actions">
+              <button id="btn-themes-all" class="link" type="button">Tous</button>
+              <button id="btn-themes-none" class="link" type="button">Aucun</button>
+            </span>
+          </div>
+          <div id="theme-chips" class="chips" role="group" aria-labelledby="lbl-themes"></div>
+          <p id="theme-hint" class="hint"></p>
+        </div>
+
+        <div class="field">
+          <span class="field-label" id="lbl-difficulty">Difficulté</span>
+          <div id="seg-difficulty" class="seg" aria-labelledby="lbl-difficulty"></div>
+          <p id="difficulty-hint" class="hint"></p>
+        </div>
+
+        <div class="field">
+          <span class="field-label" id="lbl-proximity">Proximité des mots</span>
+          <div id="seg-proximity" class="seg" aria-labelledby="lbl-proximity"></div>
+          <p id="proximity-hint" class="hint"></p>
+        </div>
+
+        <button id="btn-apply-new" class="btn primary" type="button">Lancer une nouvelle partie</button>
+      </div>
+
+      <div class="group">
         <h3>Affichage</h3>
         <div class="field">
-          <span class="field-label">Mode</span>
-          <div id="set-mode" class="seg" role="radiogroup" aria-label="Mode d'affichage">
-            <button type="button" role="radio" data-mode="auto">Auto</button>
-            <button type="button" role="radio" data-mode="light">Clair</button>
-            <button type="button" role="radio" data-mode="dark">Sombre</button>
-          </div>
+          <span class="field-label" id="lbl-appearance">Apparence</span>
+          <div id="seg-appearance" class="seg" aria-labelledby="lbl-appearance"></div>
         </div>
-        <label class="switch-row">
-          <span>Mode daltonien<small>Ajoute des symboles et des motifs aux couleurs</small></span>
-          <input type="checkbox" class="switch" id="set-cb">
-        </label>
-        <label class="switch-row">
-          <span>Animations<small>Retournement des cartes</small></span>
-          <input type="checkbox" class="switch" id="set-anim">
-        </label>
+        <label class="switch"><span>Mode daltonien <small>formes et motifs en plus des couleurs</small></span><input type="checkbox" id="opt-colorblind"><i aria-hidden="true"></i></label>
+        <div class="field">
+          <span class="field-label" id="lbl-layout">Disposition</span>
+          <div id="seg-layout" class="seg" aria-labelledby="lbl-layout"></div>
+          <p class="hint">« Auto » suit l'orientation de l'appareil. Choisissez Paysage pour une tablette posée à plat.</p>
+        </div>
+        <label class="switch"><span>Pivoter à 180° <small>pour le joueur assis en face</small></span><input type="checkbox" id="opt-flip"><i aria-hidden="true"></i></label>
+        <label class="switch"><span>Animations</span><input type="checkbox" id="opt-anim"><i aria-hidden="true"></i></label>
+      </div>
 
+      <div class="group">
         <h3>Sons et vibrations</h3>
-        <label class="switch-row">
-          <span>Sons</span>
-          <input type="checkbox" class="switch" id="set-sound">
-        </label>
-        <label class="switch-row">
-          <span>Vibrations<small>Non disponibles sur iPhone et iPad</small></span>
-          <input type="checkbox" class="switch" id="set-vibrate">
-        </label>
+        <label class="switch"><span>Sons</span><input type="checkbox" id="opt-sound"><i aria-hidden="true"></i></label>
+        <div class="field">
+          <label class="field-label" for="opt-volume">Volume</label>
+          <input type="range" id="opt-volume" min="0" max="100" step="5">
+        </div>
+        <label class="switch"><span>Vibrations <small>selon l'appareil</small></span><input type="checkbox" id="opt-vibrate"><i aria-hidden="true"></i></label>
       </div>
     </div>
   </section>
 
   <!-- Statistiques -->
-  <section id="stats" class="overlay panel-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="stats-title">
-    <div class="panel">
-      <div class="panel-head">
+  <section id="stats" class="overlay sheet-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="stats-title">
+    <div class="sheet">
+      <div class="sheet-head">
         <h2 id="stats-title">Statistiques</h2>
-        <button id="btn-stats-close" class="icon-btn" type="button" aria-label="Fermer">✕</button>
+        <button id="btn-stats-close" class="icon-btn" type="button" aria-label="Fermer">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
       </div>
-      <div class="panel-body">
-        <div id="stats-summary" class="stat-grid"></div>
-        <h3>Par thème</h3>
-        <div class="table-wrap">
-          <table id="stats-table">
-            <thead>
-              <tr><th>Thème</th><th>Parties</th><th>V</th><th>D</th><th>Tours moy.</th></tr>
-            </thead>
-            <tbody id="stats-body"></tbody>
-          </table>
-        </div>
-        <p class="hint" id="stats-hint">Les tours moyens ne comptent que les victoires (une victoire en mort subite compte 9 tours). Une partie multi-thèmes compte pour chaque thème utilisé.</p>
-        <button id="btn-stats-reset" class="btn ghost danger" type="button">Réinitialiser les statistiques</button>
-      </div>
+      <div id="stats-body"></div>
+      <button id="btn-stats-reset" class="btn ghost danger" type="button">Réinitialiser les statistiques</button>
     </div>
   </section>
 
