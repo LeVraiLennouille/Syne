@@ -611,3 +611,122 @@ html[data-layout="landscape"] .toast { bottom: calc(20px + env(safe-area-inset-b
   #app { padding-top: 14px; padding-bottom: 20px; }
   :root { --gap: 8px; }
 }
+
+/* ---------- Saisie de l'indice ---------- */
+input { -webkit-user-select: text; user-select: text; }
+
+.clue-bar { margin-top: 8px; }
+.clue-bar.attn { animation: shake .3s; }
+.clue-form { display: flex; align-items: center; gap: 6px; margin: 0; }
+.clue-form input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--ink);
+  font-size: 16px; /* 16px minimum : évite le zoom automatique sur iOS */
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.clue-form input[type="text"]::placeholder { color: var(--muted); font-weight: 400; text-transform: none; }
+.clue-form input[type="text"]:focus-visible { outline: 3px solid #8ab4ff; outline-offset: 1px; }
+.stepper {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+.stepper button {
+  width: 34px;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.stepper button:active { background: var(--line); }
+.stepper button:focus-visible { outline: 3px solid #8ab4ff; outline-offset: -3px; border-radius: 10px; }
+.stepper output { min-width: 20px; text-align: center; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.clue-form .btn { flex: none; min-height: 44px; padding: 0 16px; }
+
+.clue-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 4px 4px 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+.clue-main { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.15; }
+.clue-main small { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.clue-main strong { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clue-left {
+  flex: none;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.clue-left.done { background: var(--green); color: #fff; }
+.icon-btn.small { width: 34px; height: 34px; flex: none; }
+.icon-btn.small svg { width: 18px; height: 18px; }
+
+/* ---------- Historique ---------- */
+.hist-group { margin: 0 0 14px; }
+.hist-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.hist-head .p1 { color: var(--p1); }
+.hist-head .p2 { color: var(--p2); }
+.hist-list { margin: 0; padding: 0; list-style: none; background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.hist-list li { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.hist-list li:last-child { border-bottom: 0; }
+.hist-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  color: #fff;
+}
+.hist-ico.agent { background: var(--green); }
+.hist-ico.bystander { background: var(--neutral); color: var(--neutral-ink); }
+.hist-ico.assassin { background: var(--black); box-shadow: inset 0 0 0 1px var(--black-line); }
+.hist-ico.clue { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink); color: var(--ink); }
+.hist-ico.end, .hist-ico.sudden { background: var(--line); color: var(--ink); }
+.hist-ico.win { background: var(--green); }
+.hist-ico.lose { background: var(--black); box-shadow: inset 0 0 0 1px var(--black-line); }
+.hist-w { min-width: 0; font-weight: 700; text-transform: uppercase; overflow-wrap: anywhere; }
+.hist-w.plain { font-weight: 600; text-transform: none; }
+.hist-note { margin-left: auto; padding-left: 8px; font-size: 12px; text-align: right; color: var(--muted); }
+li.hist-result { background: var(--bg); }
+
+@media (max-width: 380px) {
+  .turn-label { font-size: 13.5px; }
+  .clue-form .btn { padding: 0 12px; }
+}

@@ -87,7 +87,9 @@
     flip: false,
     sound: true,
     volume: 0.6,
-    vibrate: true
+    vibrate: true,
+    clue: true, // saisie de l'indice (mot + nombre)
+    wakeLock: true // écran toujours allumé
   };
 
   let settings = Object.assign({}, DEFAULTS, (() => {
@@ -112,6 +114,7 @@
     configSummary: $('config-summary'),
     btnConfig: $('btn-config'),
     btnFlip: $('btn-flip'),
+    btnHistory: $('btn-history'),
     btnStats: $('btn-stats'),
     btnSettings: $('btn-settings'),
     btnP1: $('btn-p1'),
@@ -159,6 +162,23 @@
     statsBody: $('stats-body'),
     btnStatsClose: $('btn-stats-close'),
     btnStatsReset: $('btn-stats-reset'),
+    btnViewHistory: $('btn-view-history'),
+    clueBar: $('clue-bar'),
+    clueForm: $('clue-form'),
+    clueWord: $('clue-word'),
+    clueMinus: $('clue-minus'),
+    clueNum: $('clue-num'),
+    cluePlus: $('clue-plus'),
+    clueSummary: $('clue-summary'),
+    clueText: $('clue-text'),
+    clueLeft: $('clue-left'),
+    clueEdit: $('clue-edit'),
+    history: $('history'),
+    historyBody: $('history-body'),
+    btnHistoryClose: $('btn-history-close'),
+    optClue: $('opt-clue'),
+    optWakeLock: $('opt-wakelock'),
+    wakeHint: $('wake-hint'),
     toast: $('toast'),
     metaTheme: $('meta-theme')
   };
@@ -166,6 +186,8 @@
   let THEMES = {}; // chargés depuis words.json
   let state = null;
   let secretPlayer = 1;
+  let clueN = 1; // nombre en cours de saisie
+  let clueEditing = false; // modification de l'indice du tour
   let toastTimer = null;
   const fx = { reveal: -1, kind: 'flip', deal: false }; // animation à jouer au prochain rendu
 
@@ -241,6 +263,46 @@
         const c = ensure();
         if (c) SOUNDS[name](c, c.currentTime + 0.01);
       }
+    };
+  })();
+
+  // Écran toujours allumé (Screen Wake Lock) : le verrou est relâché par le navigateur
+  // quand l'onglet est masqué, on le redemande donc au retour (voir visibilitychange).
+  const WakeLock = (() => {
+    let sentinel = null;
+    let pending = false;
+    const supported = () => !!(navigator.wakeLock && typeof navigator.wakeLock.request === 'function');
+
+    async function acquire() {
+      if (!supported() || sentinel || pending || document.hidden) return;
+      pending = true;
+      try {
+        const lock = await navigator.wakeLock.request('screen');
+        if (!settings.wakeLock) {
+          // Réglage coupé pendant la demande
+          try { await lock.release(); } catch (e) { /* déjà relâché */ }
+        } else {
+          sentinel = lock;
+          lock.addEventListener('release', () => { if (sentinel === lock) sentinel = null; });
+        }
+      } catch (e) {
+        sentinel = null; // refusé (économie d'énergie, onglet masqué…) : on réessaiera plus tard
+      }
+      pending = false;
+    }
+
+    async function release() {
+      const lock = sentinel;
+      sentinel = null;
+      if (lock) {
+        try { await lock.release(); } catch (e) { /* déjà relâché */ }
+      }
+    }
+
+    return {
+      supported,
+      active: () => !!sentinel,
+      sync: () => (settings.wakeLock ? acquire() : release())
     };
   })();
 
@@ -378,8 +440,12 @@
       tokens: d.tokens, // jetons de tours restants
       suddenDeath: false,
       over: null, // null | 'win' | 'lose'
-      reason: null // 'assassin' | 'suddenDeath'
+      reason: null, // 'assassin' | 'suddenDeath'
+      clue: null, // indice du tour : { word, n }
+      turnFound: 0, // agents trouvés pendant le tour (pour le compteur de choix)
+      history: [] // journal de la partie (voir log())
     };
+    resetClueDraft();
     save();
   }
 
@@ -401,6 +467,10 @@
     s.difficulty = DIFFICULTIES[s.difficulty] ? s.difficulty : 'normal';
     s.proximity = PROXIMITIES[s.proximity] ? s.proximity : 'random';
     if (!Array.isArray(s.themes)) s.themes = s.theme && THEMES[s.theme] ? [s.theme] : themeIds();
+    // Parties enregistrées avant l'ajout de l'indice et de l'historique
+    s.clue = s.clue && typeof s.clue.word === 'string' && typeof s.clue.n === 'number' ? s.clue : null;
+    s.turnFound = s.turnFound || 0;
+    s.history = Array.isArray(s.history) ? s.history : [];
     return s;
   }
 
@@ -608,6 +678,8 @@
       els.btnEnd.textContent = 'Fin du tour';
       els.btnEnd.disabled = !!state.over;
     }
+
+    renderClue();
   }
 
   function showResult() {
@@ -639,6 +711,7 @@
     state.reason = reason || null;
     clearTimeout(toastTimer);
     els.toast.classList.remove('show'); // pas de message qui traîne sur l'écran de résultat
+    log({ t: 'over', r: over, why: reason || null });
     recordGame();
     save();
     render();
@@ -649,12 +722,15 @@
   }
 
   // Fin d'un tour : un jeton retourne dans la boîte. Plus de jeton = mort subite.
-  function endTurn(quiet) {
+  // « why » : 'manual' si les joueurs ont choisi d'arrêter (consigné dans l'historique).
+  function endTurn(quiet, why) {
+    if (why) log({ t: 'end', why });
     state.tokens = Math.max(0, state.tokens - 1);
     let entered = false;
     if (state.tokens === 0) {
       state.suddenDeath = true;
       entered = true;
+      log({ t: 'sudden' });
       toast('Plus de tours : mort subite !');
     } else {
       state.turn += 1;
@@ -662,6 +738,9 @@
     // Le joueur suivant donne l'indice, sauf s'il n'a plus d'agents à faire trouver
     const next = other(state.giver);
     if (remaining(next) > 0) state.giver = next;
+    state.clue = null;
+    state.turnFound = 0;
+    resetClueDraft();
     save();
     render();
     if (entered) { Sound.play('sudden'); buzz([40, 40, 40]); }
@@ -671,14 +750,24 @@
   function guess(i) {
     if (state.over || isDead(i)) return;
 
+    // Avec la saisie d'indice, l'indice doit être annoncé avant de deviner
+    if (clueEnabled() && !state.clue) {
+      toast('Le Joueur ' + state.giver + ' doit d\u2019abord saisir l\u2019indice.');
+      els.clueBar.classList.add('attn');
+      els.clueBar.addEventListener('animationend', () => els.clueBar.classList.remove('attn'), { once: true });
+      return;
+    }
+
     // La carte est évaluée avec la clé du joueur qui a donné l'indice
     const k = state.giver;
     const type = state.keys[k][i];
+    const word = state.words[i];
 
     // Assassin : défaite immédiate
     if (type === 'b') {
       state.status[i] = 'black';
       fx.reveal = i; fx.kind = 'flip';
+      log({ t: 'guess', w: word, r: 'assassin' });
       finish('lose', 'assassin', 'assassin');
       return;
     }
@@ -686,7 +775,9 @@
     // Agent : on continue
     if (type === 'g') {
       state.status[i] = 'green';
+      state.turnFound += 1;
       fx.reveal = i; fx.kind = 'flip';
+      log({ t: 'guess', w: word, r: 'agent' });
       if (foundCount() >= TARGET) {
         finish('win', null, 'win');
         return;
@@ -697,7 +788,9 @@
       render();
       Sound.play('agent');
       buzz(30);
-      toast(state.suddenDeath ? 'Agent trouvé ! Continuez.' : 'Agent trouvé ! Vous pouvez continuer.');
+      const reached = clueEnabled() && state.clue && state.clue.n > 0 && state.turnFound === state.clue.n;
+      toast(reached ? 'Nombre annoncé atteint : continuez ou finissez le tour.'
+        : state.suddenDeath ? 'Agent trouvé ! Continuez.' : 'Agent trouvé ! Vous pouvez continuer.');
       return;
     }
 
@@ -708,12 +801,13 @@
         btn.classList.add('shake');
         btn.addEventListener('animationend', () => btn.classList.remove('shake'), { once: true });
       }
-      toast('Le Joueur ' + k + ' l’a déjà écartée.');
+      toast('Le Joueur ' + k + ' l\u2019a déjà écartée.');
       return;
     }
 
     state.marks[k][i] = true;
     fx.reveal = i; fx.kind = 'pop';
+    log({ t: 'guess', w: word, r: 'bystander' });
     if (state.suddenDeath) {
       // Mort subite : la moindre erreur est fatale
       finish('lose', 'suddenDeath', 'lose');
@@ -723,6 +817,144 @@
     buzz(60);
     toast('Passant innocent — fin du tour.');
     endTurn(true);
+  }
+
+  /* ======================================================================
+     Indice, compteur de choix et historique
+     ====================================================================== */
+
+  const clueEnabled = () => !!settings.clue && !state.suddenDeath && !state.over;
+
+  // Journal de la partie : une entrée par indice, carte jouée, fin de tour volontaire, etc.
+  function log(entry) {
+    state.history.push(Object.assign({ turn: state.turn, p: state.giver, sd: !!state.suddenDeath }, entry));
+    if (state.history.length > 400) state.history.splice(0, state.history.length - 400);
+  }
+
+  function resetClueDraft() {
+    clueN = 1;
+    clueEditing = false;
+    els.clueWord.value = '';
+    els.clueNum.textContent = '1';
+  }
+
+  const normWord = (str) => String(str).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const stem = (w) => w.replace(/[SX]$/, '');
+
+  // Règle Duet : l'indice ne peut pas être un mot visible sur la table (ni sa forme singulier/pluriel)
+  function clueConflict(word) {
+    const w = stem(normWord(word));
+    if (!w) return false;
+    return state.words.some((bw, i) => !isDead(i) && stem(normWord(bw)) === w);
+  }
+
+  function clueLeftText() {
+    const c = state.clue;
+    if (!c) return { text: '', done: false };
+    if (c.n === 0) return { text: 'Zéro : à éviter', done: false };
+    const left = c.n - state.turnFound;
+    if (left > 0) return { text: left + ' choix restant' + (left > 1 ? 's' : ''), done: false };
+    return { text: 'Nombre atteint', done: true };
+  }
+
+  function renderClue() {
+    const on = clueEnabled();
+    els.clueBar.hidden = !on;
+    if (!on) return;
+    const showSummary = !!state.clue && !clueEditing;
+    els.clueForm.hidden = showSummary;
+    els.clueSummary.hidden = !showSummary;
+    if (showSummary) {
+      els.clueText.textContent = '\u00AB ' + state.clue.word + ' \u00BB \u00B7 ' + state.clue.n;
+      const left = clueLeftText();
+      els.clueLeft.textContent = left.text;
+      els.clueLeft.classList.toggle('done', left.done);
+    } else {
+      els.clueWord.placeholder = 'Indice du Joueur ' + state.giver;
+      els.clueNum.textContent = String(clueN);
+    }
+  }
+
+  function submitClue() {
+    const raw = els.clueWord.value.trim();
+    if (!raw) { toast('Saisissez un indice.'); els.clueWord.focus(); return; }
+    if (/\s/.test(raw)) { toast('Un seul mot pour l\u2019indice.'); els.clueWord.focus(); return; }
+    if (clueConflict(raw)) { toast('Cet indice est un mot visible sur le plateau.'); els.clueWord.focus(); return; }
+
+    state.clue = { word: raw.toUpperCase(), n: clueN };
+    // Une modification remplace l'indice du tour dans le journal au lieu d'en ajouter un
+    let replaced = false;
+    for (let j = state.history.length - 1; j >= 0; j--) {
+      const e = state.history[j];
+      if (e.turn !== state.turn || !!e.sd !== !!state.suddenDeath) break;
+      if (e.t === 'clue') { e.w = state.clue.word; e.n = clueN; replaced = true; break; }
+    }
+    if (!replaced) log({ t: 'clue', w: state.clue.word, n: clueN });
+    clueEditing = false;
+    els.clueWord.blur();
+    save();
+    render();
+    Sound.play('tap');
+  }
+
+  function histRow(icoClass, icoText, word, note, plain) {
+    const li = h('li');
+    li.appendChild(h('span', 'hist-ico ' + icoClass, icoText));
+    li.appendChild(h('span', 'hist-w' + (plain ? ' plain' : ''), word));
+    if (note) li.appendChild(h('span', 'hist-note', note));
+    return li;
+  }
+
+  function renderHistory() {
+    const body = els.historyBody;
+    body.textContent = '';
+    const hist = state.history;
+    if (!hist.length) {
+      body.appendChild(h('p', 'empty', 'Rien à relire pour l\u2019instant. Les indices et les cartes jouées apparaîtront ici.'));
+      return;
+    }
+
+    let key = null;
+    let list = null;
+    hist.forEach((e) => {
+      const k = e.sd ? 'S' : String(e.turn);
+      if (k !== key) {
+        key = k;
+        const group = h('section', 'hist-group');
+        const head = h('div', 'hist-head');
+        head.appendChild(h('span', '', e.sd ? 'Mort subite' : 'Tour ' + e.turn));
+        const who = h('span');
+        if (!e.sd) {
+          who.innerHTML = '<span class="p' + e.p + '">Joueur ' + e.p + '</span> \u2192 <span class="p' + other(e.p) + '">Joueur ' + other(e.p) + '</span>';
+        } else {
+          who.textContent = 'sans indice';
+        }
+        head.appendChild(who);
+        list = h('ul', 'hist-list');
+        group.appendChild(head);
+        group.appendChild(list);
+        body.appendChild(group);
+      }
+
+      const guesser = e.sd ? 'Joueur ' + other(e.p) + ' devine' : '';
+      if (e.t === 'clue') {
+        list.appendChild(histRow('clue', 'i', '\u00AB ' + e.w + ' \u00BB', e.n === 0 ? 'zéro : à éviter' : 'pour ' + e.n));
+      } else if (e.t === 'guess') {
+        if (e.r === 'agent') list.appendChild(histRow('agent', '\u2713', e.w, e.sd ? 'Agent · ' + guesser : 'Agent'));
+        else if (e.r === 'assassin') list.appendChild(histRow('assassin', '\u2715', e.w, e.sd ? 'Assassin · ' + guesser : 'Assassin'));
+        else list.appendChild(histRow('bystander', '\u25CB', e.w, e.sd ? 'Passant innocent · ' + guesser : 'Passant innocent · fin du tour'));
+      } else if (e.t === 'end') {
+        list.appendChild(histRow('end', '\u21AA', 'Fin du tour volontaire', '', true));
+      } else if (e.t === 'sudden') {
+        list.appendChild(histRow('sudden', '!', 'Plus de tours : mort subite', '', true));
+      } else if (e.t === 'over') {
+        const win = e.r === 'win';
+        const li = histRow(win ? 'win' : 'lose', win ? '\u2605' : '\u2715', win ? 'Victoire' : 'Défaite',
+          win ? 'Les ' + TARGET + ' agents' : e.why === 'suddenDeath' ? 'Mort subite' : 'Assassin touché', true);
+        li.classList.add('hist-result');
+        list.appendChild(li);
+      }
+    });
   }
 
   /* ======================================================================
@@ -966,6 +1198,7 @@
 
   let lastFocus = null;
   function openDialog(el) {
+    els.toast.classList.remove('show'); // le message flottant ne doit pas recouvrir la fenêtre
     lastFocus = document.activeElement;
     el.hidden = false;
     const f = el.querySelector('button');
@@ -1042,6 +1275,18 @@
     els.optVibrate.checked = !!settings.vibrate;
     els.optVolume.value = Math.round(settings.volume * 100);
     els.optVolume.disabled = !settings.sound;
+    els.optClue.checked = !!settings.clue;
+    refreshWakeHint();
+  }
+
+  function refreshWakeHint() {
+    const ok = WakeLock.supported();
+    els.optWakeLock.checked = !!settings.wakeLock;
+    els.optWakeLock.disabled = !ok;
+    els.wakeHint.textContent = !ok ? 'non pris en charge par ce navigateur'
+      : !settings.wakeLock ? 'l\u2019écran peut se mettre en veille'
+      : WakeLock.active() ? 'actif : l\u2019écran ne s\u2019éteint pas pendant la partie'
+      : 'activé, en attente de l\u2019accord du navigateur';
   }
 
   function requestNewGame() {
@@ -1087,8 +1332,30 @@
       }
       return;
     }
-    endTurn();
+    endTurn(false, 'manual');
   });
+
+  // Indice : saisie, nombre, modification
+  els.clueForm.addEventListener('submit', (e) => { e.preventDefault(); submitClue(); });
+  els.clueMinus.addEventListener('click', () => { clueN = Math.max(0, clueN - 1); els.clueNum.textContent = String(clueN); });
+  els.cluePlus.addEventListener('click', () => { clueN = Math.min(9, clueN + 1); els.clueNum.textContent = String(clueN); });
+  els.clueEdit.addEventListener('click', () => {
+    if (!state.clue) return;
+    clueEditing = true;
+    clueN = state.clue.n;
+    els.clueWord.value = state.clue.word;
+    renderClue();
+    els.clueWord.focus();
+  });
+  els.clueWord.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && clueEditing) { e.stopPropagation(); clueEditing = false; renderClue(); }
+  });
+
+  // Historique
+  const openHistory = () => { renderHistory(); openDialog(els.history); };
+  els.btnHistory.addEventListener('click', openHistory);
+  els.btnViewHistory.addEventListener('click', openHistory);
+  els.btnHistoryClose.addEventListener('click', () => closeDialog(els.history));
 
   els.btnNew.addEventListener('click', requestNewGame);
   els.btnReplay.addEventListener('click', restart);
@@ -1108,12 +1375,13 @@
   els.btnStats.addEventListener('click', () => { renderStats(); openDialog(els.stats); });
   els.btnSettingsClose.addEventListener('click', () => closeDialog(els.settings));
   els.btnStatsClose.addEventListener('click', () => closeDialog(els.stats));
-  [els.settings, els.stats].forEach((ov) => {
+  [els.settings, els.stats, els.history].forEach((ov) => {
     ov.addEventListener('click', (e) => { if (e.target === ov) closeDialog(ov); });
   });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (!els.settings.hidden) closeDialog(els.settings);
+    if (!els.history.hidden) closeDialog(els.history);
+    else if (!els.settings.hidden) closeDialog(els.settings);
     else if (!els.stats.hidden) closeDialog(els.stats);
   });
 
@@ -1149,6 +1417,8 @@
   bindSwitch(els.optAnim, 'anim');
   bindSwitch(els.optSound, 'sound', () => { refreshSettingsUI(); Sound.play('agent'); });
   bindSwitch(els.optVibrate, 'vibrate', () => buzz(40));
+  bindSwitch(els.optClue, 'clue', () => render());
+  bindSwitch(els.optWakeLock, 'wakeLock', () => { WakeLock.sync().then(refreshWakeHint); refreshWakeHint(); });
   els.optVolume.addEventListener('input', () => {
     settings.volume = Number(els.optVolume.value) / 100;
     saveSettings();
@@ -1165,6 +1435,7 @@
   // Si l'app passe en arrière-plan, on masque la vue secrète
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && !els.secret.hidden) hideSecret();
+    if (!document.hidden) WakeLock.sync(); // le verrou est relâché quand l'onglet est masqué
   });
 
   /* ======================================================================
@@ -1201,6 +1472,10 @@
     }
     render();
     showResult();
+
+    // Écran toujours allumé : certains navigateurs exigent un geste de l'utilisateur
+    WakeLock.sync();
+    document.addEventListener('pointerdown', () => WakeLock.sync(), { once: true });
   }
 
   init();
